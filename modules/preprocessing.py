@@ -2,8 +2,22 @@ import re
 import string
 import pandas as pd
 
+import nltk
 from nltk.corpus import stopwords
 from nltk.stem import WordNetLemmatizer
+
+
+def _ensure_nltk_resource(resource_path, download_name):
+    try:
+        nltk.data.find(resource_path)
+    except LookupError:
+        nltk.download(download_name, quiet=True)
+
+
+# Download only the NLTK resources that are missing (skipped if already present)
+_ensure_nltk_resource("corpora/stopwords", "stopwords")
+_ensure_nltk_resource("corpora/wordnet", "wordnet")
+_ensure_nltk_resource("corpora/omw-1.4", "omw-1.4")
 
 # Initialize
 lemmatizer = WordNetLemmatizer()
