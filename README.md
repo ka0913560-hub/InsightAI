@@ -28,7 +28,7 @@ All models are trained offline in Jupyter notebooks and shipped as `.pkl` files 
 - 😊 **Sentiment Analysis** (Positive / Negative)
 - 🎭 **Emotion Detection** (Happy, Sad, Angry, Frustrated, Satisfied)
 - 🛡️ **Fake Review Detection** (Genuine / Fake)
-- ⭐ **Star Rating Prediction** (1–5, regression based)
+- ⭐ **Star Rating Prediction** (1–5, text classification based)
 - 🔍 **Aspect-Based Sentiment Analysis** (rule-based: Quality, Delivery, Packaging, Price, Customer Service, Battery, Performance)
 - 📊 Auto-generated dashboard overview with key metrics
 - 💡 Rule-based **Business Insight** recommendations
@@ -48,9 +48,9 @@ flowchart TD
     B --> C4[TF-IDF Vectorizer - Rating]
     B --> C5[Rule-Based Aspect Engine]
     C1 --> D1[Logistic Regression - Sentiment]
-    C2 --> D2[Linear SVC - Emotion]
+    C2 --> D2[Logistic Regression - Emotion]
     C3 --> D3[Logistic Regression - Fake Review]
-    C4 --> D4[Random Forest Regressor - Rating]
+    C4 --> D4[Logistic Regression - Rating]
     C5 --> D5[Keyword + Context Window Matching]
     D1 --> E[Streamlit Dashboard]
     D2 --> E
@@ -156,14 +156,30 @@ Then open the local URL Streamlit prints (typically `http://localhost:8501`).
 |---|---|---|---|---|---|
 | Sentiment | Logistic Regression | Classification (binary) | TF-IDF (5000 feat.) | IMDB_Dataset_CLEANED.csv | Accuracy ≈ 88.5% |
 | Fake Review | Logistic Regression | Classification (binary) | TF-IDF (5000 feat.) | deceptive-opinion.csv | Accuracy ≈ 88.8% |
-| Emotion | Linear SVC | Classification (5-class) | TF-IDF (15000 feat., bigrams) | goemotions_1/2/3.csv | Accuracy ≈ 56.9% |
-| Rating | Random Forest Regressor | Regression (1–5) | TF-IDF (5000 feat.) | amazon_reviews.csv | R² ≈ 0.36, MAE ≈ 0.43 |
+| Emotion | Logistic Regression (GridSearchCV-tuned) | Classification (5-class) | TF-IDF (30000 feat., bigrams) | goemotions_1/2/3.csv | Accuracy ≈ 58.1% |
+| Rating | Logistic Regression (GridSearchCV-tuned) | Classification (5-class, 1–5) | TF-IDF (10000 feat., bigrams) | amazon_reviews.csv | Accuracy ≈ 77.4% |
 | Aspect Analysis | Rule-based (no ML) | Keyword + context window | — | Hand-curated keyword lists | — |
 
 ## 🧪 Training Process
 
-All models follow the same pattern in their respective notebook:
+Most models follow the same pattern in their respective notebook:
 `Load CSV → Select/rename columns → Clean text (preprocess_text) → TF-IDF vectorize → train_test_split (80/20, stratified where applicable) → Fit model → Evaluate → joblib.dump(model & vectorizer)`
+
+**Emotion model** (`Emotion_Training.ipynb`) follows an extended pattern:
+
+1. **TF-IDF Vectorization** — `TfidfVectorizer(max_features=30000, ngram_range=(1,2), min_df=2, max_df=0.90, sublinear_tf=True)` on the cleaned GoEmotions text.
+2. **Train/Test Split** — 80/20 stratified split via `train_test_split`.
+3. **Logistic Regression** — a baseline `LogisticRegression` is fit on the training split.
+4. **GridSearchCV Hyperparameter Tuning** — a grid search (`cv=5`, `scoring="f1_weighted"`) is run over `C`, `solver`, `class_weight`, and `max_iter` to identify the best-performing configuration.
+5. **Best model selection** — the best parameter combination from the grid search is used to evaluate performance on the held-out test set, and the trained Logistic Regression model + TF-IDF vectorizer are saved with `joblib.dump()` for use by [`modules/emotion.py`](modules/emotion.py).
+
+**Rating model** (`rating_prediction.ipynb`) also treats star-rating prediction as a text classification problem rather than a regression task:
+
+1. **TF-IDF Vectorization** — `TfidfVectorizer(max_features=10000, ngram_range=(1,2), min_df=2, max_df=0.95, sublinear_tf=True)` on the cleaned Amazon review text.
+2. **Train/Test Split** — 80/20 split via `train_test_split` (`random_state=42`).
+3. **Logistic Regression** — a `LogisticRegression` classifier is used as the base estimator, treating each star value (1–5) as a distinct class.
+4. **GridSearchCV Hyperparameter Tuning** — a grid search (`cv=5`, `scoring="f1_weighted"`) is run over `C`, `solver`, `class_weight`, and `max_iter` to identify the best-performing configuration.
+5. **Best model selection** — the best estimator (`grid.best_estimator_`) from the grid search is evaluated on the held-out test set, and the trained Logistic Regression model + TF-IDF vectorizer are saved with `joblib.dump()` for use by [`modules/rating_prediction.py`](modules/rating_prediction.py).
 
 ## 🗃️ Datasets
 
@@ -174,6 +190,62 @@ All models follow the same pattern in their respective notebook:
 | goemotions_1/2/3.csv | Emotion | ~200,000 combined |
 | amazon_reviews.csv | Rating | ~4,900 |
 | fake reviews dataset.csv | *Not currently used* | ~58,900 |
+
+---
+
+## 📈 Evaluation — Emotion Model
+
+The emotion model's hyperparameters were selected via `GridSearchCV` (`cv=5`, `scoring="f1_weighted"`) over a grid of `C`, `solver`, `class_weight`, and `max_iter` values. The best combination found was:
+
+| Hyperparameter | Value |
+|---|---|
+| `C` | 2 |
+| `solver` | saga |
+| `class_weight` | None |
+| `max_iter` | 1000 |
+
+Evaluation results on the held-out test set (from `Emotion_Training.ipynb`):
+
+- **Best CV F1-weighted score:** ≈ 0.5697
+- **Test Accuracy:** ≈ 58.06%
+
+| Emotion | Precision | Recall | F1-score |
+|---|---|---|---|
+| Angry | 0.56 | 0.44 | 0.49 |
+| Frustrated | 0.45 | 0.46 | 0.46 |
+| Happy | 0.71 | 0.59 | 0.65 |
+| Sad | 0.68 | 0.57 | 0.62 |
+| Satisfied | 0.59 | 0.73 | 0.66 |
+
+The 5-class problem is inherently difficult given the noisy, multi-label nature of the source GoEmotions dataset, which explains the moderate overall accuracy.
+
+---
+
+## 📈 Evaluation — Rating Model
+
+The rating model's hyperparameters were selected via `GridSearchCV` (`cv=5`, `scoring="f1_weighted"`) over a grid of `C`, `solver`, `class_weight`, and `max_iter` values. The best combination found was:
+
+| Hyperparameter | Value |
+|---|---|
+| `C` | 10 |
+| `solver` | lbfgs |
+| `class_weight` | balanced |
+| `max_iter` | 1000 |
+
+Evaluation results on the held-out test set (from `rating_prediction.ipynb`):
+
+- **Best CV F1-weighted score:** ≈ 0.7640
+- **Test Accuracy:** ≈ 77.42%
+
+| Rating | Precision | Recall | F1-score |
+|---|---|---|---|
+| 1 | 0.52 | 0.64 | 0.57 |
+| 2 | 0.00 | 0.00 | 0.00 |
+| 3 | 0.27 | 0.10 | 0.15 |
+| 4 | 0.21 | 0.19 | 0.20 |
+| 5 | 0.87 | 0.90 | 0.88 |
+
+The dataset is heavily skewed toward 5-star reviews, which drives the strong overall accuracy but limits performance on the minority rating classes (particularly 2 and 3 stars).
 
 ---
 

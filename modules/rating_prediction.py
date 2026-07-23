@@ -12,7 +12,7 @@ def predict_rating(review):
 
     prediction = model.predict(review_vector)[0]
 
-    rating = round(prediction)
+    return int(prediction)
     rating = max(1, min(5, rating))
 
     return rating
